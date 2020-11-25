@@ -1,0 +1,2 @@
+# HtmlTestReport
+用来根据测试结果生成相应的Html报告信息
