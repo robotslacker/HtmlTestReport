@@ -2,35 +2,22 @@
 
 import datetime
 import sys
+import os
 import io
 import time
 import unittest
+import shutil
+import click
+import copy
+from enum import Enum
 from xml.sax import saxutils
 from .__init__ import __version__
-
-class OutputRedirector(object):
-    """ Wrapper to redirect stdout or stderr """
-    def __init__(self, fp):
-        self.fp = fp
-
-    def write(self, s):
-        self.fp.write(s)
-
-    def writelines(self, lines):
-        self.fp.writelines(lines)
-
-    def flush(self):
-        self.fp.flush()
-
-stdout_redirector = OutputRedirector(sys.stdout)
-stderr_redirector = OutputRedirector(sys.stderr)
+import traceback
 
 
 # ----------------------------------------------------------------------
 # Template
-
-
-class Template_mixin(object):
+class HtmlFileTemplate(object):
     """
     Define a HTML template for report customerization and generation.
 
@@ -90,9 +77,8 @@ class Template_mixin(object):
     <meta name="generator" content="%(generator)s"/>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
     
-    <link href="http://cdn.bootcss.com/bootstrap/3.3.0/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.bootcss.com/echarts/3.8.5/echarts.common.min.js"></script>
-    <!-- <script type="text/javascript" src="js/echarts.common.min.js"></script> -->
+    <link href="css/bootstrap.min.css" rel="stylesheet">
+    <script type="text/javascript" src="js/echarts.common.min.js"></script>
     
     %(stylesheet)s
     
@@ -446,153 +432,141 @@ class Template_mixin(object):
 
     ENDING_TMPL = """<div id='ending'>&nbsp;</div>"""
 
+
 # -------------------- The end of the Template class -------------------
 
 
-TestResult = unittest.TestResult
+class TestCaseStatus(Enum):
+    UNKNOWN = 0
+    SUCCESS = 1
+    FAILURE = 2
+    ERROR = 3
 
 
-class _TestResult(TestResult):
+class TestCase(object):
+    def __init__(self):
+        self.CaseName = None
+        self.CaseStatus = TestCaseStatus.UNKNOWN
+        self.CaseDescription = ""
+        self.ErrorStackTrace = ""
+        # tid 命名方法：  pt%d%d     成功Case
+        # tid 命名方法：  ft%d%d     失败Case  %suiteid.%caseid
+        self.tid = ""        # case id
+
+    def getCaseName(self):
+        return self.CaseName
+
+    def setCaseName(self, p_CaseName):
+        self.CaseName = p_CaseName
+
+    def setCaseStatus(self, p_CaseStatus):
+        self.CaseStatus = p_CaseStatus
+
+    def getCaseStatus(self):
+        return self.CaseStatus
+
+    def getCaseDescription(self):
+        return self.CaseDescription
+
+    def getErrorStackTrace(self):
+        return self.ErrorStackTrace
+
+    def setErrorStackTrace(self, p_ErrorStackTrace):
+        self.ErrorStackTrace = p_ErrorStackTrace
+
+    def setTID(self, p_TID):
+        self.tid = p_TID
+
+    def getTID(self):
+        return self.tid
+
+
+class TestSuite(object):
+    def __init__(self):
+        self.SuiteName = None
+        self.TestCases = []
+        self.SuiteDescription = ""
+        self.PassedCaseCount = 0
+        self.FailedCaseCount = 0
+        self.ErrorCaseCount = 0
+        self.sid = 0
+        self.max_tid = 1
+
+    def getSuiteName(self):
+        return self.SuiteName
+
+    def setSuiteName(self, p_SuiteName):
+        self.SuiteName = p_SuiteName
+
+    def addTestCase(self, p_TestCase):
+        if p_TestCase.getCaseStatus() == TestCaseStatus.SUCCESS:
+            self.PassedCaseCount = self.PassedCaseCount + 1
+        if p_TestCase.getCaseStatus() == TestCaseStatus.FAILURE:
+            self.FailedCaseCount = self.FailedCaseCount + 1
+        if p_TestCase.getCaseStatus() == TestCaseStatus.ERROR:
+            self.ErrorCaseCount = self.ErrorCaseCount + 1
+        m_TestCase = copy.copy(p_TestCase)
+        m_TestCase.setTID(self.max_tid)
+        self.max_tid = self.max_tid + 1
+        self.TestCases.append(m_TestCase)
+
+    def getSuiteStatus(self):
+        return self.SuiteStatus
+
+    def setSuiteStatus(self, p_SuiteStatus):
+        self.SuiteStatus = p_SuiteStatus
+
+    def getSuiteDescription(self):
+        return self.SuiteDescription
+
+    def setSuiteDescription(self, p_SuiteDescription):
+        self.SuiteDescription = p_SuiteDescription
+
+    def getPassedCaseCount(self):
+        return self.PassedCaseCount
+
+    def getFailedCaseCount(self):
+        return self.FailedCaseCount
+
+    def getErrorCaseCount(self):
+        return self.ErrorCaseCount
+
+    def setSID(self, p_SID):
+        self.sid = p_SID
+
+    def getSID(self):
+        return self.sid
+
+
+class TestResult(object):
     # note: _TestResult is a pure representation of results.
     # It lacks the output and reporting ability compares to unittest._TextTestResult.
 
-    def __init__(self, verbosity=1):
-        TestResult.__init__(self)
-        self.stdout0 = None
-        self.stderr0 = None
+    def __init__(self):
+        self.TestResults = []
         self.success_count = 0
         self.failure_count = 0
         self.error_count = 0
+        self.max_sid = 1
+
+    def addSuite(self, p_TestSuite):
+        # 更新TestResult的全局统计信息
+        self.success_count = self.success_count + p_TestSuite.PassedCaseCount
+        self.failure_count = self.failure_count + p_TestSuite.FailedCaseCount
+        self.error_count = self.error_count + p_TestSuite.ErrorCaseCount
+
+        m_TestSuite = copy.copy(p_TestSuite)
+        m_TestSuite.setSID(self.max_sid)
+        self.max_sid = self.max_sid + 1
+        self.TestResults.append(m_TestSuite)
+
+
+class HTMLTestRunner(HtmlFileTemplate):
+
+    def __init__(self, verbosity=1, title=None, description=None):
         self.verbosity = verbosity
+        self.stopTime = 0
 
-        # result is a list of result in 4 tuple
-        # (
-        #   result code (0: success; 1: fail; 2: error),
-        #   TestCase object,
-        #   Test output (byte string),
-        #   stack trace,
-        # )
-        self.result = []
-        self.subtestlist = []
-
-    def startTest(self, test):
-        TestResult.startTest(self, test)
-        # just one buffer for both stdout and stderr
-        self.outputBuffer = io.StringIO()
-        stdout_redirector.fp = self.outputBuffer
-        stderr_redirector.fp = self.outputBuffer
-        self.stdout0 = sys.stdout
-        self.stderr0 = sys.stderr
-        sys.stdout = stdout_redirector
-        sys.stderr = stderr_redirector
-
-    def complete_output(self):
-        """
-        Disconnect output redirection and return buffer.
-        Safe to call multiple times.
-        """
-        if self.stdout0:
-            sys.stdout = self.stdout0
-            sys.stderr = self.stderr0
-            self.stdout0 = None
-            self.stderr0 = None
-        return self.outputBuffer.getvalue()
-
-    def stopTest(self, test):
-        # Usually one of addSuccess, addError or addFailure would have been called.
-        # But there are some path in unittest that would bypass this.
-        # We must disconnect stdout in stopTest(), which is guaranteed to be called.
-        self.complete_output()
-
-    def addSuccess(self, test):
-        if test not in self.subtestlist:
-            self.success_count += 1
-            TestResult.addSuccess(self, test)
-            output = self.complete_output()
-            self.result.append((0, test, output, ''))
-            if self.verbosity > 1:
-                sys.stderr.write('ok ')
-                sys.stderr.write(str(test))
-                sys.stderr.write('\n')
-            else:
-                sys.stderr.write('.')
-
-    def addError(self, test, err):
-        self.error_count += 1
-        TestResult.addError(self, test, err)
-        _, _exc_str = self.errors[-1]
-        output = self.complete_output()
-        self.result.append((2, test, output, _exc_str))
-        if self.verbosity > 1:
-            sys.stderr.write('E  ')
-            sys.stderr.write(str(test))
-            sys.stderr.write('\n')
-        else:
-            sys.stderr.write('E')
-
-    def addFailure(self, test, err):
-        self.failure_count += 1
-        TestResult.addFailure(self, test, err)
-        _, _exc_str = self.failures[-1]
-        output = self.complete_output()
-        self.result.append((1, test, output, _exc_str))
-        if self.verbosity > 1:
-            sys.stderr.write('F  ')
-            sys.stderr.write(str(test))
-            sys.stderr.write('\n')
-        else:
-            sys.stderr.write('F')
-
-    def addSubTest(self, test, subtest, err):
-        if err is not None:
-            if getattr(self, 'failfast', False):
-                self.stop()
-            if issubclass(err[0], test.failureException):
-                self.failure_count += 1
-                errors = self.failures
-                errors.append((subtest, self._exc_info_to_string(err, subtest)))
-                output = self.complete_output()
-                self.result.append((1, test, output + '\nSubTestCase Failed:\n' + str(subtest),
-                                    self._exc_info_to_string(err, subtest)))
-                if self.verbosity > 1:
-                    sys.stderr.write('F  ')
-                    sys.stderr.write(str(subtest))
-                    sys.stderr.write('\n')
-                else:
-                    sys.stderr.write('F')
-            else:
-                self.error_count += 1
-                errors = self.errors
-                errors.append((subtest, self._exc_info_to_string(err, subtest)))
-                output = self.complete_output()
-                self.result.append(
-                    (2, test, output + '\nSubTestCase Error:\n' + str(subtest), self._exc_info_to_string(err, subtest)))
-                if self.verbosity > 1:
-                    sys.stderr.write('E  ')
-                    sys.stderr.write(str(subtest))
-                    sys.stderr.write('\n')
-                else:
-                    sys.stderr.write('E')
-            self._mirrorOutput = True
-        else:
-            self.subtestlist.append(subtest)
-            self.subtestlist.append(test)
-            self.success_count += 1
-            output = self.complete_output()
-            self.result.append((0, test, output + '\nSubTestCase Pass:\n' + str(subtest), ''))
-            if self.verbosity > 1:
-                sys.stderr.write('ok ')
-                sys.stderr.write(str(subtest))
-                sys.stderr.write('\n')
-            else:
-                sys.stderr.write('.')
-
-
-class HTMLTestRunner(Template_mixin):
-
-    def __init__(self, stream=sys.stdout, verbosity=1, title=None, description=None):
-        self.stream = stream
-        self.verbosity = verbosity
         if title is None:
             self.title = self.DEFAULT_TITLE
         else:
@@ -603,29 +577,7 @@ class HTMLTestRunner(Template_mixin):
             self.description = description
 
         self.startTime = datetime.datetime.now()
-
-    def run(self, test):
-        "Run the given test case or test suite."
-        result = _TestResult(self.verbosity)
-        test(result)
         self.stopTime = datetime.datetime.now()
-        self.generateReport(test, result)
-        print('\nTime Elapsed: %s' % (self.stopTime-self.startTime), file=sys.stderr)
-        return result
-
-    def sortResult(self, result_list):
-        # unittest does not seems to run in any particular order.
-        # Here at least we want to group them together by class.
-        rmap = {}
-        classes = []
-        for n,t,o,e in result_list:
-            cls = t.__class__
-            if cls not in rmap:
-                rmap[cls] = []
-                classes.append(cls)
-            rmap[cls].append((n,t,o,e))
-        r = [(cls, rmap[cls]) for cls in classes]
-        return r
 
     def getReportAttributes(self, result):
         """
@@ -637,7 +589,7 @@ class HTMLTestRunner(Template_mixin):
         status = []
         if result.success_count: status.append(u'通过 %s' % result.success_count)
         if result.failure_count: status.append(u'失败 %s' % result.failure_count)
-        if result.error_count:   status.append(u'错误 %s' % result.error_count  )
+        if result.error_count:   status.append(u'错误 %s' % result.error_count)
         if status:
             status = ' '.join(status)
         else:
@@ -648,7 +600,7 @@ class HTMLTestRunner(Template_mixin):
             (u'状态', status),
         ]
 
-    def generateReport(self, test, result):
+    def generateReport(self, result, p_output):
         report_attrs = self.getReportAttributes(result)
         generator = 'HTMLTestRunner %s' % __version__
         stylesheet = self._generate_stylesheet()
@@ -657,15 +609,38 @@ class HTMLTestRunner(Template_mixin):
         ending = self._generate_ending()
         chart = self._generate_chart(result)
         output = self.HTML_TMPL % dict(
-            title = saxutils.escape(self.title),
-            generator = generator,
-            stylesheet = stylesheet,
-            heading = heading,
-            report = report,
-            ending = ending,
-            chart_script = chart
+            title=saxutils.escape(self.title),
+            generator=generator,
+            stylesheet=stylesheet,
+            heading=heading,
+            report=report,
+            ending=ending,
+            chart_script=chart
         )
-        self.stream.write(output)
+        # 生成html文件
+        m_OutputHandler = open(p_output, "w", encoding='utf8')
+        m_OutputHandler.write(output)
+        m_OutputHandler.close()
+
+        # 复制需要的css和js文件
+        m_csspath = os.path.abspath(os.path.join(os.path.dirname(__file__), "css"))
+        m_jspath = os.path.abspath(os.path.join(os.path.dirname(__file__), "js"))
+        m_new_csspath = os.path.abspath(os.path.join(os.path.dirname(p_output), "css"))
+        m_new_jspath = os.path.abspath(os.path.join(os.path.dirname(p_output), "js"))
+        print(m_csspath)
+        print(m_jspath)
+        print(m_new_csspath)
+        print(m_new_jspath)
+        if m_csspath != m_new_csspath:
+            if os.path.exists(m_new_csspath):
+                shutil.rmtree(m_new_csspath)
+            os.makedirs(m_new_csspath)
+            shutil.copytree(m_csspath, m_new_csspath)
+        if m_jspath != m_new_jspath:
+            if os.path.exists(m_new_jspath):
+                shutil.rmtree(m_new_jspath)
+            os.makedirs(m_new_jspath)
+            shutil.copytree(m_jspath, m_new_jspath)
 
     def _generate_stylesheet(self):
         return self.STYLESHEET_TMPL
@@ -674,56 +649,58 @@ class HTMLTestRunner(Template_mixin):
         a_lines = []
         for name, value in report_attrs:
             line = self.HEADING_ATTRIBUTE_TMPL % dict(
-                name = saxutils.escape(name),
-                value = saxutils.escape(value),
+                name=saxutils.escape(name),
+                value=saxutils.escape(value),
             )
             a_lines.append(line)
         heading = self.HEADING_TMPL % dict(
-            title = saxutils.escape(self.title),
-            parameters = ''.join(a_lines),
-            description = saxutils.escape(self.description),
+            title=saxutils.escape(self.title),
+            parameters=''.join(a_lines),
+            description=saxutils.escape(self.description),
         )
         return heading
 
     def _generate_report(self, result):
         rows = []
-        sortedResult = self.sortResult(result.result)
-        for cid, (cls, cls_results) in enumerate(sortedResult):
-            # subtotal for a class
-            np = nf = ne = 0
-            for n,t,o,e in cls_results:
-                if n == 0: np += 1
-                elif n == 1: nf += 1
-                else: ne += 1
-
-            # format class description
-            if cls.__module__ == "__main__":
-                name = cls.__name__
+        nPos = 1
+        for m_TestSuite in result.TestResults:
+            m_TestSuite.setSID(nPos)
+            nPos = nPos + 1
+            if len(m_TestSuite.getSuiteDescription()) == 0:
+                desc = m_TestSuite.getSuiteName()
             else:
-                name = "%s.%s" % (cls.__module__, cls.__name__)
-            doc = cls.__doc__ and cls.__doc__.split("\n")[0] or ""
-            desc = doc and '%s: %s' % (name, doc) or name
+                desc = m_TestSuite.getSuiteDescription()
 
+            if m_TestSuite.getErrorCaseCount() > 0:
+                m_CSSStype = "errorClass"
+            elif m_TestSuite.getFailedCaseCount() > 0:
+                m_CSSStype = "failClass"
+            else:
+                m_CSSStype = "passClass"
+            m_TotalCaseCount = m_TestSuite.getPassedCaseCount() + \
+                               m_TestSuite.getFailedCaseCount() + \
+                               m_TestSuite.getErrorCaseCount()
             row = self.REPORT_CLASS_TMPL % dict(
-                style = ne > 0 and 'errorClass' or nf > 0 and 'failClass' or 'passClass',
-                desc = desc,
-                count = np+nf+ne,
-                Pass = np,
-                fail = nf,
-                error = ne,
-                cid = 'c%s' % (cid+1),
+                style=m_CSSStype,
+                desc=desc,
+                count=m_TotalCaseCount,
+                Pass=m_TestSuite.getPassedCaseCount(),
+                fail=m_TestSuite.getFailedCaseCount(),
+                error=m_TestSuite.getErrorCaseCount(),
+                cid="c" + str(m_TestSuite.getSID()),
             )
             rows.append(row)
 
-            for tid, (n,t,o,e) in enumerate(cls_results):
-                self._generate_report_test(rows, cid, tid, n, t, o, e)
+            # 生成Suite下面TestCase的详细内容
+            for m_TestCase in m_TestSuite.TestCases:
+                self._generate_report_test(rows, m_TestSuite.getSID(), m_TestCase)
 
         report = self.REPORT_TMPL % dict(
-            test_list = ''.join(rows),
-            count = str(result.success_count+result.failure_count+result.error_count),
-            Pass = str(result.success_count),
-            fail = str(result.failure_count),
-            error = str(result.error_count),
+            test_list=''.join(rows),
+            count=str(result.success_count + result.failure_count + result.error_count),
+            Pass=str(result.success_count),
+            fail=str(result.failure_count),
+            error=str(result.error_count),
         )
         return report
 
@@ -735,27 +712,42 @@ class HTMLTestRunner(Template_mixin):
         )
         return chart
 
-    def _generate_report_test(self, rows, cid, tid, n, t, o, e):
-        # e.g. 'pt1.1', 'ft1.1', etc
-        has_output = bool(o or e)
-        tid = (n == 0 and 'p' or 'f') + 't%s.%s' % (cid+1,tid+1)
-        name = t.id().split('.')[-1]
-        doc = t.shortDescription() or ""
-        desc = doc and ('%s: %s' % (name, doc)) or name
+    def _generate_report_test(self, rows, cid, p_TestCase):
+        has_output = True
+        if p_TestCase.getCaseStatus() == TestCaseStatus.SUCCESS:
+            tid = "pt" + str(cid) + "." + str(p_TestCase.getTID())
+            m_Status = "通过"
+        elif p_TestCase.getCaseStatus() == TestCaseStatus.FAILURE:
+            tid = "ft" + str(cid) + "." + str(p_TestCase.getTID())
+            m_Status = "失败"
+        else:
+            tid = "ft" + str(cid) + "." + str(p_TestCase.getTID())
+            m_Status = "错误"
+
+        if len(p_TestCase.getCaseDescription()) == 0:
+            desc = p_TestCase.getCaseName()
+        else:
+            desc = p_TestCase.getCaseDescription()
         tmpl = has_output and self.REPORT_TEST_WITH_OUTPUT_TMPL or self.REPORT_TEST_NO_OUTPUT_TMPL
 
         script = self.REPORT_TEST_OUTPUT_TMPL % dict(
             id=tid,
-            output=saxutils.escape(o+e),
+            output=saxutils.escape(p_TestCase.getErrorStackTrace()),
         )
 
+        if p_TestCase.getCaseStatus() == TestCaseStatus.SUCCESS:
+            m_CSS_CaseStyle = "none"
+        elif p_TestCase.getCaseStatus() == TestCaseStatus.FAILURE:
+            m_CSS_CaseStyle = "failCase"
+        else:
+            m_CSS_CaseStyle = "errorCase"
         row = tmpl % dict(
             tid=tid,
-            Class=(n == 0 and 'hiddenRow' or 'none'),
-            style=(n == 2 and 'errorCase' or (n == 1 and 'failCase' or 'none')),
+            Class='hiddenRow',
+            style=m_CSS_CaseStyle,
             desc=desc,
             script=script,
-            status=self.STATUS[n],
+            status=m_Status,
         )
         rows.append(row)
         if not has_output:
@@ -765,31 +757,51 @@ class HTMLTestRunner(Template_mixin):
         return self.ENDING_TMPL
 
 
-##############################################################################
-# Facilities for running tests from the command line
-##############################################################################
+@click.command()
+@click.option("--version", is_flag=True, help="Output HtmlTestReport version.")
+@click.option("--output", type=str, required=True, help="Output Html Report.")
+def GenerateHtmlTestReport(
+        version,
+        output
+):
+    if version:
+        print("Version:", __version__)
+        sys.exit(0)
+    m_OutputFileName = output
+    m_HTMLTestRunner = HTMLTestRunner(verbosity=1, title="回归测试报告")
 
-# Note: Reuse unittest.TestProgram to launch test. In the future we may
-# build our own launcher to support more specific command line
-# parameters like test title, CSS, etc.
-class TestProgram(unittest.TestProgram):
-    """
-    A variation of the unittest.TestProgram. Please refer to the base
-    class for command line parameters.
-    """
-    def runTests(self):
-        # Pick HTMLTestRunner as the default test runner.
-        # base class's testRunner parameter is not useful because it means
-        # we have to instantiate HTMLTestRunner before we know self.verbosity.
-        if self.testRunner is None:
-            self.testRunner = HTMLTestRunner(verbosity=self.verbosity)
-        unittest.TestProgram.runTests(self)
+    m_Suite1 = TestSuite()
+    m_Suite1.setSuiteName("测试套件一")
 
-main = TestProgram
+    m_Case1 = TestCase()
+    m_Case1.setCaseName("测试名称1")
+    m_Case1.setCaseStatus(TestCaseStatus.SUCCESS)
+    m_Case1.setErrorStackTrace("错误信息对战")
 
-##############################################################################
-# Executing this module from the command line
-##############################################################################
+    m_Case2 = TestCase()
+    m_Case2.setCaseName("测试名称2")
+    m_Case2.setCaseStatus(TestCaseStatus.SUCCESS)
+    m_Case2.setErrorStackTrace("小雪是美女")
+
+    m_Case3 = TestCase()
+    m_Case3.setCaseName("测试名称3")
+    m_Case3.setCaseStatus(TestCaseStatus.FAILURE)
+    m_Case3.setErrorStackTrace("金正恩是帅哥")
+
+    m_Suite1.addTestCase(m_Case1)
+    m_Suite1.addTestCase(m_Case2)
+    m_Suite1.addTestCase(m_Case3)
+
+    m_TestResult = TestResult()
+    m_TestResult.addSuite(m_Suite1)
+
+    m_HTMLTestRunner.generateReport(result=m_TestResult, p_output=m_OutputFileName)
+
 
 if __name__ == "__main__":
-    main(module=None)
+    try:
+        GenerateHtmlTestReport()
+    except Exception as ge:
+        print('traceback.print_exc():\n%s' % traceback.print_exc())
+        print('traceback.format_exc():\n%s' % traceback.format_exc())
+        print("Fatal Exception: " + repr(ge))
