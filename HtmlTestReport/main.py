@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 
-import datetime
 import sys
 import os
-import io
-import time
-import unittest
+import json
 import shutil
 import click
 import copy
+import traceback
+from time import strftime, gmtime
+from json import JSONDecodeError
 from enum import Enum
 from xml.sax import saxutils
-from .__init__ import __version__
-import traceback
+
+__version__ = "0.0.1"
 
 
 # ----------------------------------------------------------------------
@@ -64,7 +64,7 @@ class HtmlFileTemplate(object):
     }
 
     DEFAULT_TITLE = 'Unit Test Report'
-    DEFAULT_DESCRIPTION = ''
+    DEFAULT_DESCRIPTION = '无详细信息'
 
     # ------------------------------------------------------------------------
     # HTML Template
@@ -76,15 +76,15 @@ class HtmlFileTemplate(object):
     <title>%(title)s</title>
     <meta name="generator" content="%(generator)s"/>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
-    
+
     <link href="css/bootstrap.min.css" rel="stylesheet">
-    <script type="text/javascript" src="js/echarts.common.min.js"></script>
-    
+    <script type="text/javascript" src="js/echarts.min.js"></script>
+
     %(stylesheet)s
-    
+
 </head>
 <body>
-    <script language="javascript" type="text/javascript"><!--
+    <script type="text/javascript"><!--
     output_list = Array();
 
     /* level - 0:Summary; 1:Failed; 2:All */
@@ -196,15 +196,11 @@ class HtmlFileTemplate(object):
 
         // 指定图表的配置项和数据
         var option = {
-            title : {
-                text: '测试执行情况',
-                x:'center'
-            },
             tooltip : {
                 trigger: 'item',
                 formatter: "{a} <br/>{b} : {c} ({d}%%)"
             },
-            color: ['#95b75d', 'grey', '#b64645'],
+            color: ['Chartreuse', 'grey', 'Red'],
             legend: {
                 orient: 'vertical',
                 left: 'left',
@@ -214,8 +210,26 @@ class HtmlFileTemplate(object):
                 {
                     name: '测试执行情况',
                     type: 'pie',
-                    radius : '60%%',
+                    radius: ['50%%', '70%%'],
                     center: ['50%%', '60%%'],
+                    label: {
+                        show: true,
+                        position: 'center',
+                        formatter: '{title|' + '测试通过率' +'}'+ '\\n\\r' + '{percent|%(PassPercent)s}',
+                        rich: {
+                            title:{
+                                fontSize: 20,
+                                fontFamily : "Lucida Console",
+                                color:'#454c5c'
+                            },
+                            percent: {
+                                fontFamily : "Lucida Console",
+                                fontSize: 16,
+                                color:'#6c7a89',
+                                lineHeight:30,
+                            },
+                        }
+                    },
                     data:[
                         {value:%(Pass)s, name:'通过'},
                         {value:%(fail)s, name:'失败'},
@@ -235,7 +249,7 @@ class HtmlFileTemplate(object):
         // 使用刚指定的配置项和数据显示图表。
         myChart.setOption(option);
     </script>
-    """  # variables: (Pass, fail, error)
+    """  # variables: (PassPercent, Pass, fail, error)
 
     # ------------------------------------------------------------------------
     # Stylesheet
@@ -259,12 +273,12 @@ class HtmlFileTemplate(object):
         margin-bottom: 1ex;
     }
 
-    .heading .attribute {
+    .attribute {
         margin-top: 1ex;
         margin-bottom: 0;
     }
 
-    .heading .description {
+    .description {
         margin-top: 2ex;
         margin-bottom: 3ex;
     }
@@ -342,7 +356,7 @@ class HtmlFileTemplate(object):
     %(parameters)s
     </div>
     <div style="float: left;width:50%%;"><p class='description'>%(description)s</p></div>
-    <div id="chart" style="width:50%%;height:400px;float:left;"></div>
+    <div id="chart" style="width:50%%;height:300px;float:left;"></div>
 """  # variables: (title, parameters, description)
 
     HEADING_ATTRIBUTE_TMPL = """<p class='attribute'><strong>%(name)s:</strong> %(value)s</p>
@@ -369,20 +383,26 @@ class HtmlFileTemplate(object):
             <col align='right' />
         </colgroup>
         <tr id='header_row'>
-            <td>测试套件/测试用例</td>
-            <td>总数</td>
-            <td>通过</td>
-            <td>失败</td>
-            <td>错误</td>
-            <td>查看</td>
+            <td align='center'>测试套件/测试用例</td>
+            <td align='center'>总数</td>
+            <td align='center'>通过</td>
+            <td align='center'>失败</td>
+            <td align='center'>错误</td>
+            <td align='center'>开始时间</td>
+            <td align='center'>运行耗时</td>
+            <td align='center'>查看</td>
+            <td align='center'>详细日志</td>
         </tr>
         %(test_list)s
         <tr id='total_row'>
             <td>总计</td>
-            <td>%(count)s</td>
-            <td>%(Pass)s</td>
-            <td>%(fail)s</td>
-            <td>%(error)s</td>
+            <td align='right'>%(count)s</td>
+            <td align='right'>%(Pass)s</td>
+            <td align='right'>%(fail)s</td>
+            <td align='right'>%(error)s</td>
+            <td align='center'>%(starttime)s</td>
+            <td align='center'>%(elapsedtime)s</td>
+            <td>&nbsp;</td>
             <td>&nbsp;</td>
         </tr>
     </table>
@@ -391,36 +411,43 @@ class HtmlFileTemplate(object):
     REPORT_CLASS_TMPL = u"""
     <tr class='%(style)s'>
         <td>%(desc)s</td>
-        <td>%(count)s</td>
-        <td>%(Pass)s</td>
-        <td>%(fail)s</td>
-        <td>%(error)s</td>
-        <td><a href="javascript:showClassDetail('%(cid)s',%(count)s)">详情</a></td>
+        <td align='right'>%(count)s</td>
+        <td align='right'>%(Pass)s</td>
+        <td align='right'>%(fail)s</td>
+        <td align='right'>%(error)s</td>
+        <td align='center'>%(starttime)s</td>
+        <td align='center'>%(elapsedtime)s</td>
+        <td colspan=2 align='center'><a href="javascript:showClassDetail('%(cid)s',%(count)s)">详情</a></td>
     </tr>
 """  # variables: (style, desc, count, Pass, fail, error, cid)
 
     REPORT_TEST_WITH_OUTPUT_TMPL = r"""
 <tr id='%(tid)s' class='%(Class)s'>
     <td class='%(style)s'><div class='testcase'>%(desc)s</div></td>
-    <td colspan='5' align='center'>
-
-    <!--css div popup start-->
-    <a class="popup_link" onfocus='this.blur();' href="javascript:showTestDetail('div_%(tid)s')" >
-        %(status)s</a>
-
-    <div id='div_%(tid)s' class="popup_window">
-        <pre>%(script)s</pre>
-    </div>
-    <!--css div popup end-->
-
+    <td colspan='4' align='center'>
+        <!--css div popup start-->
+        <a class="popup_link" onfocus='this.blur();' href="javascript:showTestDetail('div_%(tid)s')" >
+            %(status)s</a>
+        <div id='div_%(tid)s' class="popup_window">
+            <pre>%(script)s</pre>
+        </div>
+        <!--css div popup end-->
     </td>
+    <td align='center'>%(starttime)s</td>
+    <td align='center'>%(elapsedtime)s</td>
+    <td align='center'><a href="%(link)s">详细测试报告</a></td>
+    <td align='center'><a href="%(download)s">运行日志下载</a></td>
 </tr>
-"""  # variables: (tid, Class, style, desc, status)
+"""  # variables: (tid, Class, style, desc, link, status)
 
     REPORT_TEST_NO_OUTPUT_TMPL = r"""
 <tr id='%(tid)s' class='%(Class)s'>
     <td class='%(style)s'><div class='testcase'>%(desc)s</div></td>
-    <td colspan='5' align='center'>%(status)s</td>
+    <td colspan='4' align='center'>%(status)s</td>
+    <td align='center'>%(starttime)s</td>
+    <td align='center'>%(elapsedtime)s</td>
+    <td align='center'><a href="%(link)s">详细测试报告</a></td>
+    <td align='center'><a href="%(download)s">运行日志下载</a></td>
 </tr>
 """  # variables: (tid, Class, style, desc, status)
 
@@ -451,13 +478,35 @@ class TestCase(object):
         self.ErrorStackTrace = ""
         # tid 命名方法：  pt%d%d     成功Case
         # tid 命名方法：  ft%d%d     失败Case  %suiteid.%caseid
-        self.tid = ""        # case id
+        self.tid = ""  # case id
+        self.DetailReportLink = ""  # 指向外部的测试报告
+        self.DownloadURLLink = ""  # 日志文件下载链接
+        self.CaseStartTime = ""
+        self.CaseElapsedTime = 0  # 用秒来计算的运行时间
 
     def getCaseName(self):
         return self.CaseName
 
     def setCaseName(self, p_CaseName):
         self.CaseName = p_CaseName
+
+    def getDownloadURLLink(self):
+        return self.DownloadURLLink
+
+    def setDownloadURLLink(self, p_DownloadURLLink):
+        self.DownloadURLLink = p_DownloadURLLink
+
+    def getCaseStartTime(self):
+        return self.CaseStartTime
+
+    def setCaseStartTime(self, p_CaseStartTime):
+        self.CaseStartTime = p_CaseStartTime
+
+    def getCaseElapsedTime(self):
+        return self.CaseElapsedTime
+
+    def setCaseElapsedTime(self, p_CaseElapsedTime):
+        self.CaseElapsedTime = p_CaseElapsedTime
 
     def setCaseStatus(self, p_CaseStatus):
         self.CaseStatus = p_CaseStatus
@@ -480,6 +529,12 @@ class TestCase(object):
     def getTID(self):
         return self.tid
 
+    def getDetailReportLink(self):
+        return self.DetailReportLink
+
+    def setDetailReportLink(self, p_DetailReportLink):
+        self.DetailReportLink = p_DetailReportLink
+
 
 class TestSuite(object):
     def __init__(self):
@@ -491,9 +546,27 @@ class TestSuite(object):
         self.ErrorCaseCount = 0
         self.sid = 0
         self.max_tid = 1
+        self.SuiteStartTime = ""
+        self.SuiteElapsedTime = 0  # 用秒来计算的运行时间
+        self.CaseStatus = TestCaseStatus.UNKNOWN
 
     def getSuiteName(self):
         return self.SuiteName
+
+    def getSuiteStartTime(self):
+        return self.SuiteStartTime
+
+    def setSuiteStartTime(self, p_SuiteStartTime):
+        self.SuiteStartTime = p_SuiteStartTime
+
+    def getSuiteElapsedTime(self):
+        return self.SuiteElapsedTime
+
+    def setSuiteElapsedTime(self, p_SuiteElapsedTime):
+        self.SuiteElapsedTime = p_SuiteElapsedTime
+
+    def setCaseStatus(self, p_CaseStatus):
+        self.CaseStatus = p_CaseStatus
 
     def setSuiteName(self, p_SuiteName):
         self.SuiteName = p_SuiteName
@@ -505,16 +578,17 @@ class TestSuite(object):
             self.FailedCaseCount = self.FailedCaseCount + 1
         if p_TestCase.getCaseStatus() == TestCaseStatus.ERROR:
             self.ErrorCaseCount = self.ErrorCaseCount + 1
+        # 从Suite中查找最早的StartTime以及累计ElapsedTime
+        if self.getSuiteStartTime() == "":
+            self.setSuiteStartTime(p_TestCase.getCaseStartTime())
+        elif self.getSuiteStartTime() > p_TestCase.getCaseStartTime():
+            self.setSuiteStartTime(p_TestCase.getCaseStartTime())
+        self.setSuiteElapsedTime(self.getSuiteElapsedTime() + int(p_TestCase.getCaseElapsedTime()))
+
         m_TestCase = copy.copy(p_TestCase)
         m_TestCase.setTID(self.max_tid)
         self.max_tid = self.max_tid + 1
         self.TestCases.append(m_TestCase)
-
-    def getSuiteStatus(self):
-        return self.SuiteStatus
-
-    def setSuiteStatus(self, p_SuiteStatus):
-        self.SuiteStatus = p_SuiteStatus
 
     def getSuiteDescription(self):
         return self.SuiteDescription
@@ -548,12 +622,45 @@ class TestResult(object):
         self.failure_count = 0
         self.error_count = 0
         self.max_sid = 1
+        self.starttime = ""
+        self.elapsedtime = 0
+        self.Title = "未知标题"
+        self.Description = "无描述信息"
+
+    def getTitle(self):
+        return self.Title
+
+    def setTitle(self, p_Title):
+        self.Title = p_Title
+
+    def getDescription(self):
+        return self.Description
+
+    def setDescription(self, p_Description):
+        self.Description = p_Description
+
+    def getTestStartTime(self):
+        return self.starttime
+
+    def setTestStartTime(self, p_TestStartTime):
+        self.starttime = p_TestStartTime
+
+    def getTestElapsedTime(self):
+        return self.elapsedtime
+
+    def setTestElapsedTime(self, p_TestElapsedTime):
+        self.elapsedtime = p_TestElapsedTime
 
     def addSuite(self, p_TestSuite):
         # 更新TestResult的全局统计信息
         self.success_count = self.success_count + p_TestSuite.PassedCaseCount
         self.failure_count = self.failure_count + p_TestSuite.FailedCaseCount
         self.error_count = self.error_count + p_TestSuite.ErrorCaseCount
+        if self.getTestStartTime() == "":
+            self.setTestStartTime(p_TestSuite.getSuiteStartTime())
+        elif self.getTestStartTime() > p_TestSuite.getSuiteStartTime():
+            self.setTestStartTime(p_TestSuite.getSuiteStartTime())
+        self.setTestElapsedTime(self.getTestElapsedTime() + p_TestSuite.getSuiteElapsedTime())
 
         m_TestSuite = copy.copy(p_TestSuite)
         m_TestSuite.setSID(self.max_sid)
@@ -563,8 +670,7 @@ class TestResult(object):
 
 class HTMLTestRunner(HtmlFileTemplate):
 
-    def __init__(self, verbosity=1, title=None, description=None):
-        self.verbosity = verbosity
+    def __init__(self, title=None, description=None):
         self.stopTime = 0
 
         if title is None:
@@ -576,20 +682,20 @@ class HTMLTestRunner(HtmlFileTemplate):
         else:
             self.description = description
 
-        self.startTime = datetime.datetime.now()
-        self.stopTime = datetime.datetime.now()
-
     def getReportAttributes(self, result):
         """
         Return report attributes as a list of (name, value).
         Override this to add custom attributes.
         """
-        startTime = str(self.startTime)[:19]
-        duration = str(self.stopTime - self.startTime)
+        startTime = str(result.starttime)
+        duration = strftime("%H:%M:%S", gmtime(int(result.elapsedtime)))
         status = []
-        if result.success_count: status.append(u'通过 %s' % result.success_count)
-        if result.failure_count: status.append(u'失败 %s' % result.failure_count)
-        if result.error_count:   status.append(u'错误 %s' % result.error_count)
+        if result.success_count:
+            status.append(u'通过 %s' % result.success_count)
+        if result.failure_count:
+            status.append(u'失败 %s' % result.failure_count)
+        if result.error_count:
+            status.append(u'错误 %s' % result.error_count)
         if status:
             status = ' '.join(status)
         else:
@@ -601,10 +707,9 @@ class HTMLTestRunner(HtmlFileTemplate):
         ]
 
     def generateReport(self, result, p_output):
-        report_attrs = self.getReportAttributes(result)
         generator = 'HTMLTestRunner %s' % __version__
         stylesheet = self._generate_stylesheet()
-        heading = self._generate_heading(report_attrs)
+        heading = self._generate_heading(result)
         report = self._generate_report(result)
         ending = self._generate_ending()
         chart = self._generate_chart(result)
@@ -627,25 +732,20 @@ class HTMLTestRunner(HtmlFileTemplate):
         m_jspath = os.path.abspath(os.path.join(os.path.dirname(__file__), "js"))
         m_new_csspath = os.path.abspath(os.path.join(os.path.dirname(p_output), "css"))
         m_new_jspath = os.path.abspath(os.path.join(os.path.dirname(p_output), "js"))
-        print(m_csspath)
-        print(m_jspath)
-        print(m_new_csspath)
-        print(m_new_jspath)
         if m_csspath != m_new_csspath:
             if os.path.exists(m_new_csspath):
                 shutil.rmtree(m_new_csspath)
-            os.makedirs(m_new_csspath)
             shutil.copytree(m_csspath, m_new_csspath)
         if m_jspath != m_new_jspath:
             if os.path.exists(m_new_jspath):
                 shutil.rmtree(m_new_jspath)
-            os.makedirs(m_new_jspath)
             shutil.copytree(m_jspath, m_new_jspath)
 
     def _generate_stylesheet(self):
         return self.STYLESHEET_TMPL
 
-    def _generate_heading(self, report_attrs):
+    def _generate_heading(self, result):
+        report_attrs = self.getReportAttributes(result)
         a_lines = []
         for name, value in report_attrs:
             line = self.HEADING_ATTRIBUTE_TMPL % dict(
@@ -654,9 +754,9 @@ class HTMLTestRunner(HtmlFileTemplate):
             )
             a_lines.append(line)
         heading = self.HEADING_TMPL % dict(
-            title=saxutils.escape(self.title),
+            title=saxutils.escape(result.getTitle()),
             parameters=''.join(a_lines),
-            description=saxutils.escape(self.description),
+            description=saxutils.escape(result.getDescription()),
         )
         return heading
 
@@ -687,6 +787,8 @@ class HTMLTestRunner(HtmlFileTemplate):
                 Pass=m_TestSuite.getPassedCaseCount(),
                 fail=m_TestSuite.getFailedCaseCount(),
                 error=m_TestSuite.getErrorCaseCount(),
+                starttime=m_TestSuite.getSuiteStartTime(),
+                elapsedtime=strftime("%H:%M:%S", gmtime(int(m_TestSuite.getSuiteElapsedTime()))),
                 cid="c" + str(m_TestSuite.getSID()),
             )
             rows.append(row)
@@ -700,12 +802,16 @@ class HTMLTestRunner(HtmlFileTemplate):
             count=str(result.success_count + result.failure_count + result.error_count),
             Pass=str(result.success_count),
             fail=str(result.failure_count),
+            starttime=result.starttime,
+            elapsedtime=strftime("%H:%M:%S", gmtime(int(result.elapsedtime))),
             error=str(result.error_count),
         )
         return report
 
     def _generate_chart(self, result):
+        m_TotalCaseCount = result.success_count + result.failure_count + result.error_count
         chart = self.ECHARTS_SCRIPT % dict(
+            PassPercent=str(result.success_count / m_TotalCaseCount * 100) + "%",
             Pass=str(result.success_count),
             fail=str(result.failure_count),
             error=str(result.error_count),
@@ -713,7 +819,7 @@ class HTMLTestRunner(HtmlFileTemplate):
         return chart
 
     def _generate_report_test(self, rows, cid, p_TestCase):
-        has_output = True
+        has_output = len(p_TestCase.getErrorStackTrace()) != 0
         if p_TestCase.getCaseStatus() == TestCaseStatus.SUCCESS:
             tid = "pt" + str(cid) + "." + str(p_TestCase.getTID())
             m_Status = "通过"
@@ -723,7 +829,8 @@ class HTMLTestRunner(HtmlFileTemplate):
         else:
             tid = "ft" + str(cid) + "." + str(p_TestCase.getTID())
             m_Status = "错误"
-
+        if has_output:
+            m_Status = m_Status + "(点击查看详细信息)"
         if len(p_TestCase.getCaseDescription()) == 0:
             desc = p_TestCase.getCaseName()
         else:
@@ -746,6 +853,10 @@ class HTMLTestRunner(HtmlFileTemplate):
             Class='hiddenRow',
             style=m_CSS_CaseStyle,
             desc=desc,
+            starttime=p_TestCase.getCaseStartTime(),
+            elapsedtime=strftime("%H:%M:%S", gmtime(int(p_TestCase.getCaseElapsedTime()))),
+            link=p_TestCase.getDetailReportLink(),
+            download=p_TestCase.getDownloadURLLink(),
             script=script,
             status=m_Status,
         )
@@ -758,43 +869,123 @@ class HTMLTestRunner(HtmlFileTemplate):
 
 
 @click.command()
-@click.option("--version", is_flag=True, help="Output HtmlTestReport version.")
+@click.option("--version", is_flag=True, help="Display HtmlTestReport version.")
+@click.option("--title", type=str, help="Report title")
+@click.option("--datadir", type=str, required=True, help="Test result directory name or file name.")
 @click.option("--output", type=str, required=True, help="Output Html Report.")
+@click.option("--descfile", type=str, help="Test description")
 def GenerateHtmlTestReport(
         version,
-        output
+        datadir,
+        output,
+        title,
+        descfile
 ):
     if version:
         print("Version:", __version__)
         sys.exit(0)
-    m_OutputFileName = output
-    m_HTMLTestRunner = HTMLTestRunner(verbosity=1, title="回归测试报告")
 
-    m_Suite1 = TestSuite()
-    m_Suite1.setSuiteName("测试套件一")
+    m_InputFileOrDirectory = datadir
+    m_InputDirectory = ""
+    m_TestResultList = []
+    if os.path.isfile(m_InputFileOrDirectory):
+        m_InputDirectory = os.path.dirname(m_InputFileOrDirectory)
+        # 参数是一个文件
+        if m_InputFileOrDirectory.endswith(".json"):
+            with open(m_InputFileOrDirectory, 'r') as load_f:
+                try:
+                    m_TestResults = json.load(load_f)
+                    for m_TestResult in m_TestResults:
+                        m_TestResult["load_filename"] = str(m_InputFileOrDirectory)
+                        m_TestResultList.append(m_TestResult)
+                except JSONDecodeError:
+                    print("[WARNING] file [" + m_InputFileOrDirectory + "] is a bad json format, ignore it.")
+    if os.path.isdir(m_InputFileOrDirectory):
+        m_InputDirectory = m_InputFileOrDirectory
+        # 遍历这个目录下的所有文件
+        filelist = os.listdir(m_InputFileOrDirectory)
+        for file in filelist:
+            newfile = os.path.join(m_InputFileOrDirectory, file)
+            if os.path.isfile(newfile) and newfile.endswith(".json"):
+                with open(newfile, 'r') as load_f:
+                    try:
+                        m_TestResults = json.load(load_f)
+                        for m_TestResult in m_TestResults:
+                            m_TestResult["load_filename"] = str(file)
+                            m_TestResultList.append(m_TestResult)
+                    except JSONDecodeError:
+                        print("[WARNING] file [" + newfile + "] is a bad json format, ignore it.")
 
-    m_Case1 = TestCase()
-    m_Case1.setCaseName("测试名称1")
-    m_Case1.setCaseStatus(TestCaseStatus.SUCCESS)
-    m_Case1.setErrorStackTrace("错误信息对战")
+    # 循环处理TestCase信息
+    m_SuiteDict = {}
+    for m_TestResult in m_TestResultList:
+        if m_TestResult["SuiteName"] in m_SuiteDict.keys():
+            m_TestSuite = m_SuiteDict[m_TestResult["SuiteName"]]
+        else:
+            m_TestSuite = TestSuite()
+            m_TestSuite.setSuiteName(m_TestResult["SuiteName"])
+        m_TestCase = TestCase()
+        m_TestCase.setCaseName(m_TestResult["CaseName"])
+        if m_TestResult["CaseStatus"].strip().upper() == "SUCCESS":
+            m_TestCase.setCaseStatus(TestCaseStatus.SUCCESS)
+        elif m_TestResult["CaseStatus"].strip().upper() == "FAILURE":
+            m_TestCase.setCaseStatus(TestCaseStatus.FAILURE)
+        elif m_TestResult["CaseStatus"].strip().upper() == "ERROR":
+            m_TestCase.setCaseStatus(TestCaseStatus.ERROR)
+        else:
+            print("[WARNING] case [" + m_TestResult["CaseName"] +
+                  "] in [" + m_TestResult["load_filename"] + "] has invalid case status [" +
+                  m_TestResult["CaseStatus"] + "]")
+            continue
+        m_TraceContent = ""
+        if m_TestResult["CaseErrorStackTraceFile"] != "":
+            # 从Trace文件中读取内容，并填写进入报告
+            m_TraceFileName = os.path.join(m_InputDirectory, m_TestResult["CaseErrorStackTraceFile"])
+            if os.path.isfile(m_TraceFileName):
+                with open(m_TraceFileName, 'r') as load_f:
+                    m_TraceContent = load_f.read(1024)
+            else:
+                m_TraceContent = "File [" + m_TraceFileName + "] is not able to read."
+        m_TestCase.setErrorStackTrace(m_TraceContent)
+        m_TestCase.setDetailReportLink(m_TestResult["CaseReportLink"])
+        m_TestCase.setDownloadURLLink(m_TestResult["DownloadURLLink"])
+        m_TestCase.setCaseStartTime(m_TestResult["CaseStartTime"])
+        m_ElapsedTime = str(m_TestResult["CaseElapsedTime"])
+        if m_ElapsedTime.isnumeric():
+            m_TestCase.setCaseElapsedTime(m_ElapsedTime)
+        else:
+            print("[WARNING] case [" + m_TestResult["CaseName"] +
+                  "] in [" + m_TestResult["load_filename"] + "] has invalid CaseElapsedTime [" +
+                  m_TestResult["CaseElapsedTime"] + "]")
+            continue
 
-    m_Case2 = TestCase()
-    m_Case2.setCaseName("测试名称2")
-    m_Case2.setCaseStatus(TestCaseStatus.SUCCESS)
-    m_Case2.setErrorStackTrace("小雪是美女")
+        # 添加信息到Suite中
+        m_TestSuite.addTestCase(m_TestCase)
+        # 记录Suite信息
+        m_SuiteDict[m_TestResult["SuiteName"]] = copy.copy(m_TestSuite)
 
-    m_Case3 = TestCase()
-    m_Case3.setCaseName("测试名称3")
-    m_Case3.setCaseStatus(TestCaseStatus.FAILURE)
-    m_Case3.setErrorStackTrace("金正恩是帅哥")
-
-    m_Suite1.addTestCase(m_Case1)
-    m_Suite1.addTestCase(m_Case2)
-    m_Suite1.addTestCase(m_Case3)
-
+    # 合成Report
+    if title:
+        m_ReportTitle = title
+    else:
+        m_ReportTitle = "未知测试报告"
     m_TestResult = TestResult()
-    m_TestResult.addSuite(m_Suite1)
+    m_TestResult.setTitle(m_ReportTitle)
+    if descfile is None:
+        m_Description = "无描述信息"
+    else:
+        if os.path.isfile(descfile):
+            with open(descfile, 'r', encoding="utf-8") as f:
+                m_Description = ''.join(f.readlines())
+        else:
+            m_Description = "描述文件[" + descfile + "] 不可读."
+    m_TestResult.setDescription(m_Description)
+    for m_TestSuite in m_SuiteDict.values():
+        m_TestResult.addSuite(m_TestSuite)
 
+    # 生成测试报告
+    m_OutputFileName = output
+    m_HTMLTestRunner = HTMLTestRunner()
     m_HTMLTestRunner.generateReport(result=m_TestResult, p_output=m_OutputFileName)
 
 
