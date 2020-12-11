@@ -470,8 +470,7 @@ class HtmlFileTemplate(object):
             <td align='center'>负责人</td>
             <td align='center'>开始时间</td>
             <td align='center'>运行耗时</td>
-            <td align='center'>首次失败日期</td>
-            <td align='center'>累计失败次数</td>
+            <td align='center'>首次失败版本</td>
             <td colspan=2 align='center'>详细日志</td>
         </tr>
         %(test_list)s
@@ -485,13 +484,13 @@ class HtmlFileTemplate(object):
             <td align='center'>%(starttime)s</td>
             <td align='center'>%(elapsedtime)s</td>
             <td align='center'>--------</td>
-            <td align='center'>--------</td>
             <td>&nbsp;</td>
             <td>&nbsp;</td>
         </tr>
     </table>
 """  # variables: (test_list, count, Pass, fail, error)
 
+    # 整个Suite的统计信息
     REPORT_CLASS_TMPL = u"""
     <tr class='%(style)s'>
         <td>%(desc)s</td>
@@ -499,15 +498,15 @@ class HtmlFileTemplate(object):
         <td align='right'>%(Pass)s</td>
         <td align='right'>%(fail)s</td>
         <td align='right'>%(error)s</td>
-        <td align='center'>--------</td>
+        <td align='center'>%(owner)s</td>
         <td align='center'>%(starttime)s</td>
         <td align='center'>%(elapsedtime)s</td>
-        <td align='center'>--------</td>
-        <td align='center'>--------</td>
+        <td align='center'>---------</td>
         <td colspan=2 align='center'><a href="javascript:showClassDetail('%(cid)s',%(count)s)">详情</a></td>
     </tr>
 """  # variables: (style, desc, count, Pass, fail, error, cid)
 
+    # 具体Case的统计信息
     REPORT_TEST_WITH_OUTPUT_TMPL = r"""
 <tr id='%(tid)s' class='%(Class)s'>
     <td class='%(style)s'><div class='testcase'>%(desc)s</div></td>
@@ -523,13 +522,13 @@ class HtmlFileTemplate(object):
     <td align='center'>%(owner)s</td>
     <td align='center'>%(starttime)s</td>
     <td align='center'>%(elapsedtime)s</td>
-    <td align='center'>--------</td>
-    <td align='center'>--------</td>
+    <td align='center'>%(firstbadlabel)s</td>
     <td align='center'><a href="%(link)s">详细测试报告</a></td>
     <td align='center'><a href="%(download)s">运行日志下载</a></td>
 </tr>
 """  # variables: (tid, Class, style, desc, link, status)
 
+    # 具体Case的统计信息
     REPORT_TEST_NO_OUTPUT_TMPL = r"""
 <tr id='%(tid)s' class='%(Class)s'>
     <td class='%(style)s'><div class='testcase'>%(desc)s</div></td>
@@ -537,6 +536,7 @@ class HtmlFileTemplate(object):
     <td align='center'>%(owner)s</td>
     <td align='center'>%(starttime)s</td>
     <td align='center'>%(elapsedtime)s</td>
+    <td align='center'>%(firstbadlabel)s</td>
     <td align='center'><a href="%(link)s">详细测试报告</a></td>
     <td align='center'><a href="%(download)s">运行日志下载</a></td>
 </tr>
@@ -573,8 +573,22 @@ class TestCase(object):
         self.DetailReportLink = ""  # 指向外部的测试报告
         self.DownloadURLLink = ""  # 日志文件下载链接
         self.CaseStartTime = ""
-        self.CaseElapsedTime = 0  # 用秒来计算的运行时间
+        self.CaseElapsedTime = 0               # 用秒来计算的运行时间
         self.CaseOwner = ""
+        self.CaseRTI = ""                      # Case的Regress Tracking Issue ID
+        self.CaseFirstBadLabel = ""            # Case第一次失败的版本
+
+    def getCaseRTI(self):
+        return self.CaseRTI
+
+    def setCaseRTI(self, p_CaseRTI):
+        self.CaseRTI = p_CaseRTI
+
+    def getCaseFirstBadLabel(self):
+        return self.CaseFirstBadLabel
+
+    def setCaseFirstBadLabel(self, p_CaseFirstBadLabel):
+        self.CaseFirstBadLabel = p_CaseFirstBadLabel
 
     def getCaseName(self):
         return self.CaseName
@@ -646,10 +660,13 @@ class TestSuite(object):
         self.max_tid = 1
         self.SuiteStartTime = ""
         self.SuiteElapsedTime = 0  # 用秒来计算的运行时间
-        self.CaseStatus = TestCaseStatus.UNKNOWN
+        self.SuiteOwnerList = ""   # Suite的所有人，可能包含多个人，多个人用逗号分割
 
     def getSuiteName(self):
         return self.SuiteName
+
+    def getSuiteOwnerList(self):
+        return self.SuiteOwnerList
 
     def getSuiteStartTime(self):
         return self.SuiteStartTime
@@ -663,9 +680,6 @@ class TestSuite(object):
     def setSuiteElapsedTime(self, p_SuiteElapsedTime):
         self.SuiteElapsedTime = p_SuiteElapsedTime
 
-    def setCaseStatus(self, p_CaseStatus):
-        self.CaseStatus = p_CaseStatus
-
     def setSuiteName(self, p_SuiteName):
         self.SuiteName = p_SuiteName
 
@@ -675,6 +689,7 @@ class TestSuite(object):
 
     def SummaryTestCase(self):
         m_OldCases = copy.copy(self.TestCases)
+        m_TestCasesOwnerList = []
         self.TestCases = []
         for m_case in m_OldCases:
             if m_case.getCaseStatus() == TestCaseStatus.SUCCESS:
@@ -689,9 +704,14 @@ class TestSuite(object):
             elif self.getSuiteStartTime() > m_case.getCaseStartTime():
                 self.setSuiteStartTime(m_case.getCaseStartTime())
             self.setSuiteElapsedTime(self.getSuiteElapsedTime() + int(m_case.getCaseElapsedTime()))
+            # 不重复的记录每一个Case的Owner
+            if m_case.getCaseOwner() not in m_TestCasesOwnerList:
+                m_TestCasesOwnerList.append(m_case.getCaseOwner())
             m_case.setTID(self.max_tid)
             self.max_tid = self.max_tid + 1
             self.TestCases.append(m_case)
+        #拼接整个Suite的Owner，即把所有Case的Owner都用逗号隔开
+        self.SuiteOwnerList = ','.join(m_TestCasesOwnerList)
 
     def getSuiteDescription(self):
         return self.SuiteDescription
@@ -893,6 +913,7 @@ class HTMLTestRunner(HtmlFileTemplate):
                 Pass=m_TestSuite.getPassedCaseCount(),
                 fail=m_TestSuite.getFailedCaseCount(),
                 error=m_TestSuite.getErrorCaseCount(),
+                owner=m_TestSuite.getSuiteOwnerList(),
                 starttime=m_TestSuite.getSuiteStartTime(),
                 elapsedtime=strftime("%H:%M:%S", gmtime(int(m_TestSuite.getSuiteElapsedTime()))),
                 cid="c" + str(m_TestSuite.getSID()),
@@ -995,10 +1016,10 @@ class HTMLTestRunner(HtmlFileTemplate):
             m_Status = "通过"
         elif p_TestCase.getCaseStatus() == TestCaseStatus.FAILURE:
             tid = "ft" + str(cid) + "." + str(p_TestCase.getTID())
-            m_Status = "失败"
+            m_Status = "失败" + "(RTI: " + str(p_TestCase.getCaseRTI()) + ")"
         else:
             tid = "ft" + str(cid) + "." + str(p_TestCase.getTID())
-            m_Status = "错误"
+            m_Status = "错误" + "(RTI: " + str(p_TestCase.getCaseRTI()) + ")"
         if has_output:
             m_Status = m_Status + "(点击查看详细信息)"
         if len(p_TestCase.getCaseDescription()) == 0:
@@ -1027,6 +1048,7 @@ class HTMLTestRunner(HtmlFileTemplate):
             elapsedtime=strftime("%H:%M:%S", gmtime(int(p_TestCase.getCaseElapsedTime()))),
             link=p_TestCase.getDetailReportLink(),
             download=p_TestCase.getDownloadURLLink(),
+            firstbadlabel=p_TestCase.getCaseFirstBadLabel(),
             script=script,
             status=m_Status,
             owner=p_TestCase.getCaseOwner()
@@ -1101,6 +1123,16 @@ def GenerateHtmlTestReport(
             m_TestCase.setCaseOwner(m_TestResult["CaseOwner"])
         else:
             m_TestCase.setCaseOwner("UNKNOWN")
+        # Regression Tracking ID
+        if "RTI" in m_TestResult.keys():
+            m_TestCase.setCaseRTI(m_TestResult["RTI"])
+        else:
+            m_TestCase.setCaseRTI("UNKNOWN")
+        if "Test_Label_FirstFailed" in m_TestResult.keys():
+            m_TestCase.setCaseFirstBadLabel(m_TestResult["Test_Label_FirstFailed"])
+        else:
+            m_TestCase.setCaseFirstBadLabel("UNKNOWN")
+        # Case的运行状态
         if m_TestResult["CaseStatus"].strip().upper() == "SUCCESS":
             m_TestCase.setCaseStatus(TestCaseStatus.SUCCESS)
         elif m_TestResult["CaseStatus"].strip().upper() == "FAILURE":
