@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 import sys
 import os
 import json
@@ -69,15 +68,17 @@ class HtmlFileTemplate(object):
     # ------------------------------------------------------------------------
     # HTML Template
 
-    HTML_TMPL = r"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml">
+    HTML_TMPL = r"""
+<!DOCTYPE html>
+<html>
 <head>
     <title>%(title)s</title>
     <meta name="generator" content="%(generator)s"/>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
 
     <link href="css/bootstrap.min.css" rel="stylesheet">
+    <script type="text/javascript" src="js/jquery.min.js"></script>
+    <script type="text/javascript" src="js/bootstrap.min.js"></script>
     <script type="text/javascript" src="js/echarts.min.js"></script>
 
     %(stylesheet)s
@@ -183,16 +184,17 @@ class HtmlFileTemplate(object):
         %(heading)s
         %(report)s
         %(ending)s
-        %(chart_script)s
+        %(chart_script1)s
+        %(chart_script2)s
     </div>
 </body>
 </html>
 """  # variables: (title, generator, stylesheet, heading, report, ending, chart_script)
 
-    ECHARTS_SCRIPT = """
+    ECHARTS_SCRIPT_1 = """
     <script type="text/javascript">
         // 基于准备好的dom，初始化echarts实例
-        var myChart = echarts.init(document.getElementById('chart'));
+        var myChart = echarts.init(document.getElementById('chart1'));
 
         // 指定图表的配置项和数据
         var option = {
@@ -200,7 +202,7 @@ class HtmlFileTemplate(object):
                 trigger: 'item',
                 formatter: "{a} <br/>{b} : {c} ({d}%%)"
             },
-            color: ['Chartreuse', 'grey', 'Red'],
+            color: ['LightGreen', 'Orange', 'OrangeRed'],
             legend: {
                 orient: 'vertical',
                 left: 'left',
@@ -215,7 +217,7 @@ class HtmlFileTemplate(object):
                     label: {
                         show: true,
                         position: 'center',
-                        formatter: '{title|' + '测试通过率' +'}'+ '\\n\\r' + '{percent|%(PassPercent)s}',
+                        formatter: '{title|' + '总体测试通过率' +'}'+ '\\n\\r' + '{percent|%(PassPercent)s}',
                         rich: {
                             title:{
                                 fontSize: 20,
@@ -246,6 +248,80 @@ class HtmlFileTemplate(object):
             ]
         };
 
+        // 使用刚指定的配置项和数据显示图表。
+        myChart.setOption(option);
+    </script>
+    """  # variables: (PassPercent, Pass, fail, error)
+
+    ECHARTS_SCRIPT_2 = """
+    <script type="text/javascript">
+        // 基于准备好的dom，初始化echarts实例
+        var myChart = echarts.init(document.getElementById('chart2'));
+
+        // 指定图表的配置项和数据
+        option = {
+            tooltip: {
+                trigger: 'axis',
+                axisPointer: {            // Use axis to trigger tooltip
+                    type: 'shadow'        // 'shadow' as default; can also be 'line' or 'shadow'
+                }
+            },
+            color: ['OrangeRed','Orange', 'LightGreen'],
+            legend: {
+                data: ['错误', '失败', '成功'],
+            },
+            grid: {
+                left: '3%%',
+                right: '4%%',
+                bottom: '3%%',
+                containLabel: true
+            },
+            xAxis: {
+                type: 'value'
+            },
+            yAxis: {
+                type: 'category',
+                data: [%(userlist)s]
+            },
+            series: [
+                {
+                    name: '错误',
+                    type: 'bar',
+                    stack: 'total',
+                    label: {
+                        show: true
+                    },
+                    emphasis: {
+                        focus: 'series'
+                    },
+                    data: [%(userdata_error)s]
+                },
+                {
+                    name: '失败',
+                    type: 'bar',
+                    stack: 'total',
+                    label: {
+                        show: true
+                    },
+                    emphasis: {
+                        focus: 'series'
+                    },
+                    data: [%(userdata_fail)s]
+                },
+                {
+                    name: '成功',
+                    type: 'bar',
+                    stack: 'total',
+                    label: {
+                        show: true
+                    },
+                    emphasis: {
+                        focus: 'series'
+                    },
+                    data: [%(userdata_pass)s]
+                },
+          ]
+        };
         // 使用刚指定的配置项和数据显示图表。
         myChart.setOption(option);
     </script>
@@ -320,12 +396,12 @@ class HtmlFileTemplate(object):
         background-color: #ebebeb;
     }
     #total_row  { font-weight: bold; }
-    .passClass  { background-color: #bdedbc; }
-    .failClass  { background-color: #ffefa4; }
-    .errorClass { background-color: #ffc9c9; }
-    .passCase   { color: #6c6; }
-    .failCase   { color: #FF6600; font-weight: bold; }
-    .errorCase  { color: #c00; font-weight: bold; }
+    .passClass  { background-color: LightGreen; }
+    .failClass  { background-color: Orange; }
+    .errorClass { background-color: OrangeRed; }
+    .passCase   { color: Black; }
+    .failCase   { color: Orange; font-weight: bold; }
+    .errorCase  { color: OrangeRed; font-weight: bold; }
     .hiddenRow  { display: none; }
     .testcase   { margin-left: 2em; }
 
@@ -355,8 +431,11 @@ class HtmlFileTemplate(object):
         <h1>%(title)s</h1>
     %(parameters)s
     </div>
-    <div style="float: left;width:50%%;"><p class='description'>%(description)s</p></div>
-    <div id="chart" style="width:50%%;height:300px;float:left;"></div>
+    <div style="float: left;width:100%%;">
+        <div style="float: left;width:40%%;"><p class='description'>%(description)s</p></div>
+        <div id="chart1" style="width:30%%;height:300px;float:left;"></div>
+        <div id="chart2" style="width:30%%;height:300px;float:left;"></div>
+    </div>
 """  # variables: (title, parameters, description)
 
     HEADING_ATTRIBUTE_TMPL = """<p class='attribute'><strong>%(name)s:</strong> %(value)s</p>
@@ -388,10 +467,12 @@ class HtmlFileTemplate(object):
             <td align='center'>通过</td>
             <td align='center'>失败</td>
             <td align='center'>错误</td>
+            <td align='center'>负责人</td>
             <td align='center'>开始时间</td>
             <td align='center'>运行耗时</td>
-            <td align='center'>查看</td>
-            <td align='center'>详细日志</td>
+            <td align='center'>首次失败日期</td>
+            <td align='center'>累计失败次数</td>
+            <td colspan=2 align='center'>详细日志</td>
         </tr>
         %(test_list)s
         <tr id='total_row'>
@@ -400,8 +481,11 @@ class HtmlFileTemplate(object):
             <td align='right'>%(Pass)s</td>
             <td align='right'>%(fail)s</td>
             <td align='right'>%(error)s</td>
+            <td align='center'>--------</td>            
             <td align='center'>%(starttime)s</td>
             <td align='center'>%(elapsedtime)s</td>
+            <td align='center'>--------</td>
+            <td align='center'>--------</td>
             <td>&nbsp;</td>
             <td>&nbsp;</td>
         </tr>
@@ -415,8 +499,11 @@ class HtmlFileTemplate(object):
         <td align='right'>%(Pass)s</td>
         <td align='right'>%(fail)s</td>
         <td align='right'>%(error)s</td>
+        <td align='center'>--------</td>
         <td align='center'>%(starttime)s</td>
         <td align='center'>%(elapsedtime)s</td>
+        <td align='center'>--------</td>
+        <td align='center'>--------</td>
         <td colspan=2 align='center'><a href="javascript:showClassDetail('%(cid)s',%(count)s)">详情</a></td>
     </tr>
 """  # variables: (style, desc, count, Pass, fail, error, cid)
@@ -433,8 +520,11 @@ class HtmlFileTemplate(object):
         </div>
         <!--css div popup end-->
     </td>
+    <td align='center'>%(owner)s</td>
     <td align='center'>%(starttime)s</td>
     <td align='center'>%(elapsedtime)s</td>
+    <td align='center'>--------</td>
+    <td align='center'>--------</td>
     <td align='center'><a href="%(link)s">详细测试报告</a></td>
     <td align='center'><a href="%(download)s">运行日志下载</a></td>
 </tr>
@@ -444,6 +534,7 @@ class HtmlFileTemplate(object):
 <tr id='%(tid)s' class='%(Class)s'>
     <td class='%(style)s'><div class='testcase'>%(desc)s</div></td>
     <td colspan='4' align='center'>%(status)s</td>
+    <td align='center'>%(owner)s</td>
     <td align='center'>%(starttime)s</td>
     <td align='center'>%(elapsedtime)s</td>
     <td align='center'><a href="%(link)s">详细测试报告</a></td>
@@ -483,12 +574,19 @@ class TestCase(object):
         self.DownloadURLLink = ""  # 日志文件下载链接
         self.CaseStartTime = ""
         self.CaseElapsedTime = 0  # 用秒来计算的运行时间
+        self.CaseOwner = ""
 
     def getCaseName(self):
         return self.CaseName
 
     def setCaseName(self, p_CaseName):
         self.CaseName = p_CaseName
+
+    def getCaseOwner(self):
+        return self.CaseOwner
+
+    def setCaseOwner(self, p_CaseOwner):
+        self.CaseOwner = p_CaseOwner
 
     def getDownloadURLLink(self):
         return self.DownloadURLLink
@@ -572,23 +670,28 @@ class TestSuite(object):
         self.SuiteName = p_SuiteName
 
     def addTestCase(self, p_TestCase):
-        if p_TestCase.getCaseStatus() == TestCaseStatus.SUCCESS:
-            self.PassedCaseCount = self.PassedCaseCount + 1
-        if p_TestCase.getCaseStatus() == TestCaseStatus.FAILURE:
-            self.FailedCaseCount = self.FailedCaseCount + 1
-        if p_TestCase.getCaseStatus() == TestCaseStatus.ERROR:
-            self.ErrorCaseCount = self.ErrorCaseCount + 1
-        # 从Suite中查找最早的StartTime以及累计ElapsedTime
-        if self.getSuiteStartTime() == "":
-            self.setSuiteStartTime(p_TestCase.getCaseStartTime())
-        elif self.getSuiteStartTime() > p_TestCase.getCaseStartTime():
-            self.setSuiteStartTime(p_TestCase.getCaseStartTime())
-        self.setSuiteElapsedTime(self.getSuiteElapsedTime() + int(p_TestCase.getCaseElapsedTime()))
-
         m_TestCase = copy.copy(p_TestCase)
-        m_TestCase.setTID(self.max_tid)
-        self.max_tid = self.max_tid + 1
         self.TestCases.append(m_TestCase)
+
+    def SummaryTestCase(self):
+        m_OldCases = copy.copy(self.TestCases)
+        self.TestCases = []
+        for m_case in m_OldCases:
+            if m_case.getCaseStatus() == TestCaseStatus.SUCCESS:
+                self.PassedCaseCount = self.PassedCaseCount + 1
+            if m_case.getCaseStatus() == TestCaseStatus.FAILURE:
+                self.FailedCaseCount = self.FailedCaseCount + 1
+            if m_case.getCaseStatus() == TestCaseStatus.ERROR:
+                self.ErrorCaseCount = self.ErrorCaseCount + 1
+            # 从Suite中查找最早的StartTime以及累计ElapsedTime
+            if self.getSuiteStartTime() == "":
+                self.setSuiteStartTime(m_case.getCaseStartTime())
+            elif self.getSuiteStartTime() > m_case.getCaseStartTime():
+                self.setSuiteStartTime(m_case.getCaseStartTime())
+            self.setSuiteElapsedTime(self.getSuiteElapsedTime() + int(m_case.getCaseElapsedTime()))
+            m_case.setTID(self.max_tid)
+            self.max_tid = self.max_tid + 1
+            self.TestCases.append(m_case)
 
     def getSuiteDescription(self):
         return self.SuiteDescription
@@ -617,9 +720,9 @@ class TestResult(object):
     # It lacks the output and reporting ability compares to unittest._TextTestResult.
 
     def __init__(self):
-        self.TestResults = []
-        self.success_count = 0
-        self.failure_count = 0
+        self.TestSuites = []
+        self.pass_count = 0
+        self.fail_count = 0
         self.error_count = 0
         self.max_sid = 1
         self.starttime = ""
@@ -653,8 +756,8 @@ class TestResult(object):
 
     def addSuite(self, p_TestSuite):
         # 更新TestResult的全局统计信息
-        self.success_count = self.success_count + p_TestSuite.PassedCaseCount
-        self.failure_count = self.failure_count + p_TestSuite.FailedCaseCount
+        self.pass_count = self.pass_count + p_TestSuite.PassedCaseCount
+        self.fail_count = self.fail_count + p_TestSuite.FailedCaseCount
         self.error_count = self.error_count + p_TestSuite.ErrorCaseCount
         if self.getTestStartTime() == "":
             self.setTestStartTime(p_TestSuite.getSuiteStartTime())
@@ -665,7 +768,7 @@ class TestResult(object):
         m_TestSuite = copy.copy(p_TestSuite)
         m_TestSuite.setSID(self.max_sid)
         self.max_sid = self.max_sid + 1
-        self.TestResults.append(m_TestSuite)
+        self.TestSuites.append(m_TestSuite)
 
 
 class HTMLTestRunner(HtmlFileTemplate):
@@ -690,10 +793,10 @@ class HTMLTestRunner(HtmlFileTemplate):
         startTime = str(result.starttime)
         duration = strftime("%H:%M:%S", gmtime(int(result.elapsedtime)))
         status = []
-        if result.success_count:
-            status.append(u'通过 %s' % result.success_count)
-        if result.failure_count:
-            status.append(u'失败 %s' % result.failure_count)
+        if result.pass_count:
+            status.append(u'通过 %s' % result.pass_count)
+        if result.fail_count:
+            status.append(u'失败 %s' % result.fail_count)
         if result.error_count:
             status.append(u'错误 %s' % result.error_count)
         if status:
@@ -712,7 +815,8 @@ class HTMLTestRunner(HtmlFileTemplate):
         heading = self._generate_heading(result)
         report = self._generate_report(result)
         ending = self._generate_ending()
-        chart = self._generate_chart(result)
+        chart1 = self._generate_chart1(result)
+        chart2 = self._generate_chart2(result)
         output = self.HTML_TMPL % dict(
             title=saxutils.escape(self.title),
             generator=generator,
@@ -720,7 +824,8 @@ class HTMLTestRunner(HtmlFileTemplate):
             heading=heading,
             report=report,
             ending=ending,
-            chart_script=chart
+            chart_script1=chart1,
+            chart_script2=chart2
         )
         # 生成html文件
         m_OutputHandler = open(p_output, "w", encoding='utf8')
@@ -756,14 +861,15 @@ class HTMLTestRunner(HtmlFileTemplate):
         heading = self.HEADING_TMPL % dict(
             title=saxutils.escape(result.getTitle()),
             parameters=''.join(a_lines),
-            description=saxutils.escape(result.getDescription()),
+            # 对描述信息不进行转义，以保证其中的换行符显示
+            description=result.getDescription(),
         )
         return heading
 
     def _generate_report(self, result):
         rows = []
         nPos = 1
-        for m_TestSuite in result.TestResults:
+        for m_TestSuite in result.TestSuites:
             m_TestSuite.setSID(nPos)
             nPos = nPos + 1
             if len(m_TestSuite.getSuiteDescription()) == 0:
@@ -799,22 +905,86 @@ class HTMLTestRunner(HtmlFileTemplate):
 
         report = self.REPORT_TMPL % dict(
             test_list=''.join(rows),
-            count=str(result.success_count + result.failure_count + result.error_count),
-            Pass=str(result.success_count),
-            fail=str(result.failure_count),
+            count=str(result.pass_count + result.fail_count + result.error_count),
+            Pass=str(result.pass_count),
+            fail=str(result.fail_count),
             starttime=result.starttime,
             elapsedtime=strftime("%H:%M:%S", gmtime(int(result.elapsedtime))),
             error=str(result.error_count),
         )
         return report
 
-    def _generate_chart(self, result):
-        m_TotalCaseCount = result.success_count + result.failure_count + result.error_count
-        chart = self.ECHARTS_SCRIPT % dict(
-            PassPercent=str(result.success_count / m_TotalCaseCount * 100) + "%",
-            Pass=str(result.success_count),
-            fail=str(result.failure_count),
+    def _generate_chart1(self, result):
+        m_TotalCaseCount = result.pass_count + result.fail_count + result.error_count
+        if m_TotalCaseCount == 0:
+            m_PassPercent = "-----"
+        else:
+            m_PassPercent = str("{:.2f}".format(result.pass_count / m_TotalCaseCount * 100)) + "%"
+        chart = self.ECHARTS_SCRIPT_1 % dict(
+            PassPercent=m_PassPercent,
+            Pass=str(result.pass_count),
+            fail=str(result.fail_count),
             error=str(result.error_count),
+        )
+        return chart
+
+    def _generate_chart2(self, result):
+        # 遍历所有的TestCase，获得TestCase的Owner列表
+        m_TestCaseOwnerList = []
+        for m_TestSuite in result.TestSuites:
+            for m_TestCase in m_TestSuite.TestCases:
+                if m_TestCase.getCaseOwner() not in m_TestCaseOwnerList:
+                    m_TestCaseOwnerList.append(m_TestCase.getCaseOwner())
+        # 循环获得用户列表
+        m_TestCaseOwnerParameter = ""
+        for m_User in m_TestCaseOwnerList:
+            if m_TestCaseOwnerParameter == "":
+                m_TestCaseOwnerParameter = "'" + m_User + "'"
+            else:
+                m_TestCaseOwnerParameter = m_TestCaseOwnerParameter + ",'" + m_User + "'"
+        # 循环获得用户各种情况测试案例的统计数据
+        m_TestCaseFailCountList = []
+        m_TestCaseErrorCountList = []
+        m_TestCasePassCountList = []
+        m_TestCaseOwnerFailParameter = ""
+        m_TestCaseOwnerErrorParameter = ""
+        m_TestCaseOwnerPassParameter = ""
+        for m_User in m_TestCaseOwnerList:
+            m_TestCaseFailCount = 0
+            m_TestCaseErrorCount = 0
+            m_TestCasePassCount = 0
+            for m_TestSuite in result.TestSuites:
+                for m_TestCase in m_TestSuite.TestCases:
+                    if m_TestCase.getCaseOwner() == m_User:
+                        if m_TestCase.getCaseStatus() == TestCaseStatus.FAILURE:
+                            m_TestCaseFailCount = m_TestCaseFailCount + 1
+                        if m_TestCase.getCaseStatus() == TestCaseStatus.ERROR:
+                            m_TestCaseErrorCount = m_TestCaseErrorCount + 1
+                        if m_TestCase.getCaseStatus() == TestCaseStatus.SUCCESS:
+                            m_TestCasePassCount = m_TestCasePassCount + 1
+            m_TestCaseFailCountList.append(m_TestCaseFailCount)
+            m_TestCaseErrorCountList.append(m_TestCaseErrorCount)
+            m_TestCasePassCountList.append(m_TestCasePassCount)
+        for m_Count in m_TestCaseFailCountList:
+            if m_TestCaseOwnerFailParameter == "":
+                m_TestCaseOwnerFailParameter = str(m_Count)
+            else:
+                m_TestCaseOwnerFailParameter = m_TestCaseOwnerFailParameter + "," + str(m_Count)
+        for m_Count in m_TestCaseErrorCountList:
+            if m_TestCaseOwnerErrorParameter == "":
+                m_TestCaseOwnerErrorParameter = str(m_Count)
+            else:
+                m_TestCaseOwnerErrorParameter = m_TestCaseOwnerErrorParameter + "," + str(m_Count)
+        for m_Count in m_TestCasePassCountList:
+            if m_TestCaseOwnerPassParameter == "":
+                m_TestCaseOwnerPassParameter = str(m_Count)
+            else:
+                m_TestCaseOwnerPassParameter = m_TestCaseOwnerPassParameter + "," + str(m_Count)
+        chart = self.ECHARTS_SCRIPT_2 % dict(
+            userlist=m_TestCaseOwnerParameter,
+            userdata_error=m_TestCaseOwnerErrorParameter,
+            userdata_fail=m_TestCaseOwnerFailParameter,
+            userdata_pass=m_TestCaseOwnerPassParameter,
         )
         return chart
 
@@ -859,6 +1029,7 @@ class HTMLTestRunner(HtmlFileTemplate):
             download=p_TestCase.getDownloadURLLink(),
             script=script,
             status=m_Status,
+            owner=p_TestCase.getCaseOwner()
         )
         rows.append(row)
         if not has_output:
@@ -926,6 +1097,10 @@ def GenerateHtmlTestReport(
             m_TestSuite.setSuiteName(m_TestResult["SuiteName"])
         m_TestCase = TestCase()
         m_TestCase.setCaseName(m_TestResult["CaseName"])
+        if "CaseOwner" in m_TestResult.keys():
+            m_TestCase.setCaseOwner(m_TestResult["CaseOwner"])
+        else:
+            m_TestCase.setCaseOwner("UNKNOWN")
         if m_TestResult["CaseStatus"].strip().upper() == "SUCCESS":
             m_TestCase.setCaseStatus(TestCaseStatus.SUCCESS)
         elif m_TestResult["CaseStatus"].strip().upper() == "FAILURE":
@@ -938,14 +1113,16 @@ def GenerateHtmlTestReport(
                   m_TestResult["CaseStatus"] + "]")
             continue
         m_TraceContent = ""
-        if m_TestResult["CaseErrorStackTraceFile"] != "":
-            # 从Trace文件中读取内容，并填写进入报告
-            m_TraceFileName = os.path.join(m_InputDirectory, m_TestResult["CaseErrorStackTraceFile"])
-            if os.path.isfile(m_TraceFileName):
-                with open(m_TraceFileName, 'r') as load_f:
-                    m_TraceContent = load_f.read(1024)
-            else:
-                m_TraceContent = "File [" + m_TraceFileName + "] is not able to read."
+        if "CaseErrorStackTrace" in m_TestResult.keys():
+            if m_TestResult["CaseErrorStackTrace"] != "":
+                m_TraceContent = m_TestResult["CaseErrorStackTrace"]
+        if "CaseErrorStackTraceFile" in m_TestResult.keys():
+            if m_TestResult["CaseErrorStackTraceFile"] != "":
+                # 从Trace文件中读取内容，并填写进入报告
+                m_TraceFileName = os.path.join(m_InputDirectory, m_TestResult["CaseErrorStackTraceFile"])
+                if os.path.isfile(m_TraceFileName):
+                    with open(m_TraceFileName, 'r') as load_f:
+                        m_TraceContent = m_TraceContent + "\n" + load_f.read(1024)
         m_TestCase.setErrorStackTrace(m_TraceContent)
         m_TestCase.setDetailReportLink(m_TestResult["CaseReportLink"])
         m_TestCase.setDownloadURLLink(m_TestResult["DownloadURLLink"])
@@ -959,8 +1136,21 @@ def GenerateHtmlTestReport(
                   m_TestResult["CaseElapsedTime"] + "]")
             continue
 
-        # 添加信息到Suite中
-        m_TestSuite.addTestCase(m_TestCase)
+        # 检查Case是否已经重新出现在Suite中，如果有，以最新的为准
+        m_bFoundOldResult = False
+        for m_nPos in range(0, len(m_TestSuite.TestCases)):
+            if m_TestSuite.TestCases[m_nPos].getCaseName() == m_TestCase.getCaseName():
+                if m_TestSuite.TestCases[m_nPos].getCaseStartTime() <= m_TestCase.getCaseStartTime():
+                    # 存在该记录，且日期比较旧，放弃之前旧记录
+                    m_TestSuite.TestCases.pop(m_nPos)
+                    break
+                else:
+                    # 存在该记录，且日期比较新，放弃之前新记录
+                    m_bFoundOldResult = True
+                    break
+        if not m_bFoundOldResult:
+            m_TestSuite.addTestCase(m_TestCase)
+
         # 记录Suite信息
         m_SuiteDict[m_TestResult["SuiteName"]] = copy.copy(m_TestSuite)
 
@@ -976,11 +1166,13 @@ def GenerateHtmlTestReport(
     else:
         if os.path.isfile(descfile):
             with open(descfile, 'r', encoding="utf-8") as f:
-                m_Description = ''.join(f.readlines())
+                m_Description = '<br>'.join(f.readlines())
         else:
-            m_Description = "描述文件[" + descfile + "] 不可读."
+            m_Description = "无描述信息"
     m_TestResult.setDescription(m_Description)
     for m_TestSuite in m_SuiteDict.values():
+        # 记录Case的汇总信息
+        m_TestSuite.SummaryTestCase()
         m_TestResult.addSuite(m_TestSuite)
 
     # 生成测试报告
