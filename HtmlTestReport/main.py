@@ -501,7 +501,7 @@ class HtmlFileTemplate(object):
         <td align='center'>%(owner)s</td>
         <td align='center'>%(starttime)s</td>
         <td align='center'>%(elapsedtime)s</td>
-        <td align='center'>---------</td>
+        <td align='center'>%(firstbadlabel)s</td>
         <td colspan=2 align='center'><a href="javascript:showClassDetail('%(cid)s',%(count)s)">详情</a></td>
     </tr>
 """  # variables: (style, desc, count, Pass, fail, error, cid)
@@ -659,14 +659,21 @@ class TestSuite(object):
         self.sid = 0
         self.max_tid = 1
         self.SuiteStartTime = ""
-        self.SuiteElapsedTime = 0  # 用秒来计算的运行时间
-        self.SuiteOwnerList = ""   # Suite的所有人，可能包含多个人，多个人用逗号分割
+        self.SuiteElapsedTime = 0          # 用秒来计算的运行时间
+        self.SuiteOwnerList = ""           # Suite的所有人，可能包含多个人，多个人用逗号分割
+        self.SuiteFirstBadLabel = ""       # 第一次出问题的Label
 
     def getSuiteName(self):
         return self.SuiteName
 
     def getSuiteOwnerList(self):
         return self.SuiteOwnerList
+
+    def getSuiteFirstBadLabel(self):
+        return self.SuiteFirstBadLabel
+
+    def setSuiteFirstBadLabel(self, p_SuiteFirstBadLabel):
+        self.SuiteFirstBadLabel = p_SuiteFirstBadLabel
 
     def getSuiteStartTime(self):
         return self.SuiteStartTime
@@ -704,6 +711,10 @@ class TestSuite(object):
             elif self.getSuiteStartTime() > m_case.getCaseStartTime():
                 self.setSuiteStartTime(m_case.getCaseStartTime())
             self.setSuiteElapsedTime(self.getSuiteElapsedTime() + int(m_case.getCaseElapsedTime()))
+            if self.getSuiteFirstBadLabel() == "":
+                self.setSuiteFirstBadLabel(m_case.getCaseFirstBadLabel())
+            elif self.getSuiteFirstBadLabel() > m_case.getCaseFirstBadLabel():
+                self.setSuiteFirstBadLabel(m_case.getCaseFirstBadLabel())
             # 不重复的记录每一个Case的Owner
             if m_case.getCaseOwner() not in m_TestCasesOwnerList:
                 m_TestCasesOwnerList.append(m_case.getCaseOwner())
@@ -916,6 +927,7 @@ class HTMLTestRunner(HtmlFileTemplate):
                 owner=m_TestSuite.getSuiteOwnerList(),
                 starttime=m_TestSuite.getSuiteStartTime(),
                 elapsedtime=strftime("%H:%M:%S", gmtime(int(m_TestSuite.getSuiteElapsedTime()))),
+                firstbadlabel=m_TestSuite.getSuiteFirstBadLabel(),
                 cid="c" + str(m_TestSuite.getSID()),
             )
             rows.append(row)
